@@ -79,3 +79,51 @@ export function compareMonths(curMap, prevMap) {
   }
   return rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
+
+// ---------- Plan de presupuesto ----------
+/** Días entre dos fechas "AAAA-MM-DD" (b - a). */
+export function daysBetween(a, b) {
+  const p = (s) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((p(b) - p(a)) / 86400000);
+}
+
+/**
+ * Revisión ANTES de guardar un gasto.
+ * Devuelve null si cabe en el plan, o { kind: 'out' | 'over' | 'total', after, budget, excess }.
+ */
+export function preSaveCheck({ cat, before, amount, totalBudget, totalSpentBefore }) {
+  if (!cat || !(amount > 0)) return null;
+  if (cat.outOfPlan) return { kind: 'out', after: before + amount, budget: 0, excess: amount };
+  const b = cat.monthlyBudget;
+  if (b > 0 && before + amount > b) {
+    return { kind: 'over', after: before + amount, budget: b, excess: before + amount - Math.max(b, before) };
+  }
+  if (totalBudget > 0 && totalSpentBefore + amount > totalBudget) {
+    const after = totalSpentBefore + amount;
+    return { kind: 'total', after, budget: totalBudget, excess: after - Math.max(totalBudget, totalSpentBefore) };
+  }
+  return null;
+}
+
+/** Deseos que ya cumplieron los días de espera y siguen sin decisión. */
+export function dueWishes(list, today, waitDays = 30) {
+  return (list || []).filter((w) => !w.decision && daysBetween(w.date, today) >= waitDays);
+}
+
+/**
+ * Si hoy o ayer fue día de pago, devuelve esa fecha (sirve como clave para no repetir el aviso).
+ * days: días del mes (31 = último día del mes).
+ */
+export function paydayDue(today, days) {
+  const [y, m, d] = today.split('-').map(Number);
+  const candidates = [new Date(y, m - 1, d), new Date(y, m - 1, d - 1)];
+  for (const t of candidates) {
+    const dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+    for (const pd of days || []) {
+      if (t.getDate() === Math.min(pd, dim)) {
+        return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      }
+    }
+  }
+  return null;
+}

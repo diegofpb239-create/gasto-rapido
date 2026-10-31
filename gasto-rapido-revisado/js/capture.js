@@ -1,9 +1,14 @@
 // Pantalla de captura: monto → categoría → Guardar.
 import { state, put, remove, catById, catsOf } from './db.js';
 import { esc, money, moneyWhole, toCents, todayStr, uid, $, $$ } from './util.js';
-import { toast, openSheet, closeSheet, vibrate } from './ui.js';
+import { toast, openSheet, closeSheet, vibrate, choose } from './ui.js';
 import { inMonth, sum, byCategory, budgetAlert, pendingRecurring, backupDue } from './logic.js';
 import { doBackup, hasData, requestPersistence } from './backup.js';
+import { checkExpense, overview, addWish, wishesDue, paydayReminder, sundayReminder, decideDate } from './plan.js';
+import { openWishlist } from './wishes.js';
+import { setSetting } from './db.js';
+
+const go = (view) => document.dispatchEvent(new CustomEvent('gr:navigate', { detail: view }));
 
 // El formulario vive fuera de render() para no perder lo escrito al cambiar de pestaña.
 const form = {
@@ -76,6 +81,25 @@ function quickHtml() {
 
 function bannersHtml() {
   const out = [];
+  const pay = paydayReminder();
+  if (pay) {
+    out.push(`<button type="button" class="banner" data-act="payday">💸 <span><b>Quincena:</b> págate primero${pay.amount ? ` — pasa <b>${esc(moneyWhole(pay.amount))}</b> a tus ahorros` : ''}. Hoy y mañana, nada fuera del plan. <span class="muted">(toca para marcar hecho)</span></span></button>`);
+  }
+  const ov = overview();
+  const nOver = ov.over.length + ov.outCats.length;
+  if (nOver) {
+    const extra = ov.outTotal ? ` · ${esc(moneyWhole(ov.outTotal))} fuera del plan` : '';
+    out.push(`<button type="button" class="banner bad" data-act="goSummary">🚨 <span><b>${nOver}</b> categoría${nOver > 1 ? 's' : ''} pasada${nOver > 1 ? 's' : ''} del presupuesto${extra}</span></button>`);
+  } else if (ov.budget > 0 && ov.spent > 0) {
+    const ratio = ov.spent / ov.budget;
+    if (ratio >= 0.8) out.push(`<button type="button" class="banner warn" data-act="goSummary">⚠️ <span>Llevas <b>${Math.round(ratio * 100)}%</b> de tu presupuesto del mes</span></button>`);
+  }
+  const due = wishesDue();
+  if (due.length) {
+    out.push(`<button type="button" class="banner" data-act="wishes">🛍️ <span><b>${due.length}</b> deseo${due.length > 1 ? 's' : ''} ya cumplió 30 días: ¿todavía lo quieres?</span></button>`);
+  }
+  const sun = sundayReminder();
+  if (sun) out.push(`<button type="button" class="banner" data-act="sunday">📊 <span><b>Domingo de revisión:</b> mira en qué se fue tu dinero esta semana</span></button>`);
   const pend = pendingRecurring(state.recurring, todayStr());
   if (pend.length) {
     out.push(`<button type="button" class="banner" data-act="recurring">🔔 <span><b>${pend.length}</b> pago${pend.length > 1 ? 's' : ''} recurrente${pend.length > 1 ? 's' : ''} por confirmar</span></button>`);
@@ -186,6 +210,18 @@ function bind() {
     if (t.dataset.act === 'recurring') { openRecurringSheet(); return; }
     if (t.dataset.act === 'backup') { doBackup().then((ok) => ok && renderCapture(root)); return; }
     if (t.dataset.act === 'newcat') { openNewCategory(); return; }
+    if (t.dataset.act === 'goSummary') { go('summary'); return; }
+    if (t.dataset.act === 'wishes') { openWishlist(refreshBanners); return; }
+    if (t.dataset.act === 'payday') {
+      const p = paydayReminder();
+      if (p) setSetting('paydayDismissed', p.key).then(() => { toast('¡Bien! Ahorro de la quincena hecho ✔'); refreshBanners(); });
+      return;
+    }
+    if (t.dataset.act === 'sunday') {
+      const s = sundayReminder();
+      if (s) setSetting('sundayDismissed', s.key).then(() => go('summary'));
+      return;
+    }
   };
 
   const note = $('#note', root);
@@ -210,6 +246,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- Guardado ----------
 function budgetMessage(cat, before, after, date) {
+  if (cat.outOfPlan) return `🚫 ${cat.name} está fuera de tu plan: este mes llevas ${money(after)} aquí.`;
   const lvl = budgetAlert(before, after, cat.monthlyBudget);
   if (!lvl) return null;
   const left = cat.monthlyBudget - after;
@@ -236,6 +273,26 @@ async function insertExpense(rec) {
   requestPersistence();
 }
 
+/** Revisa el plan antes de guardar. Devuelve 'save', 'cancel' o 'wish'. */
+async function guard(rec) {
+  const w = checkExpense(rec);
+  if (!w) return 'save';
+  vibrate([40, 60, 40]);
+  const r = await choose(w.title, w.text, [
+    { label: 'No lo compro · a mi Lista de deseos', value: 'wish', kind: 'primary' },
+    { label: 'Ya lo gasté · registrarlo', value: 'save', kind: 'danger' },
+    { label: 'Cancelar', value: 'cancel' }
+  ]);
+  return r || 'cancel';
+}
+
+async function toWishlist(rec) {
+  const cat = catById(rec.categoryId);
+  const wish = await addWish({ name: rec.note || (cat ? cat.name : 'Gasto'), amount: rec.amount, categoryId: rec.categoryId });
+  toast(`Anotado en tu Lista de deseos. Decides el ${decideDate(wish)} ✔`, { duration: 5000 });
+  refreshBanners();
+}
+
 async function save() {
   const cents = toCents(form.amount);
   if (!cents) { shake(); toast('Escribe un monto'); return; }
@@ -245,10 +302,14 @@ async function save() {
   btn.disabled = true;
   try {
     if (form.type === 'gasto') {
-      await insertExpense({
+      const rec = {
         id: uid(), amount: cents, categoryId: form.catId, necessity: form.necessity,
         paymentMethodId: form.payId, note: form.note.trim(), date, createdAt: new Date().toISOString()
-      });
+      };
+      const g = await guard(rec);
+      if (g === 'cancel') { btn.disabled = false; return; }
+      if (g === 'wish') await toWishlist(rec);
+      else await insertExpense(rec);
     } else {
       const rec = { id: uid(), amount: cents, categoryId: form.catId, note: form.note.trim(), date, createdAt: new Date().toISOString() };
       await put('incomes', rec);
@@ -273,10 +334,14 @@ async function saveQuick(id) {
   const q = state.quickExpenses.find((x) => x.id === id);
   if (!q) return;
   try {
-    await insertExpense({
+    const rec = {
       id: uid(), amount: q.amount, categoryId: q.categoryId, necessity: q.necessity,
-      paymentMethodId: q.paymentMethodId || null, note: '', date: todayStr(), createdAt: new Date().toISOString()
-    });
+      paymentMethodId: q.paymentMethodId || null, note: q.name, date: todayStr(), createdAt: new Date().toISOString()
+    };
+    const g = await guard(rec);
+    if (g === 'cancel') return;
+    if (g === 'wish') await toWishlist(rec);
+    else { await insertExpense(rec); refreshBanners(); }
   } catch (e) {
     toast('No se pudo guardar: ' + (e.message || e), { kind: 'bad' });
   }

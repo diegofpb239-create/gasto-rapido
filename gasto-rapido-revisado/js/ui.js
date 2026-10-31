@@ -68,6 +68,20 @@ export function ask(message, { ok = 'Aceptar', cancel = 'Cancelar', danger = fal
   });
 }
 
+/** Diálogo con varias opciones. buttons: [{ label, value, kind }] (kind: 'primary' | 'danger' | ''). */
+export function choose(title, message, buttons) {
+  return new Promise((resolve) => {
+    const root = document.getElementById('dialog-root');
+    root.innerHTML =
+      `<div class="dialog" role="alertdialog">${title ? `<h3 class="dialog-t">${esc(title)}</h3>` : ''}<p>${esc(message)}</p>` +
+      `<div class="stack">${buttons.map((b, i) => `<button class="btn ${esc(b.kind || '')}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+    root.classList.add('open');
+    const finish = (v) => { root.classList.remove('open'); root.innerHTML = ''; resolve(v); };
+    root.querySelectorAll('button').forEach((b) => (b.onclick = () => finish(buttons[Number(b.dataset.i)].value)));
+    root.onclick = (e) => { if (e.target === root) finish(null); };
+  });
+}
+
 // ---------- Utilidades de formulario ----------
 export const field = (label, inner) => `<label class="field"><span>${esc(label)}</span>${inner}</label>`;
 export const options = (items, selected, { blank } = {}) =>

@@ -169,7 +169,8 @@ export function validateBackup(obj) {
   if (d.categories.some(c => !text(c.name) || !text(c.icon) || !['gasto', 'ingreso'].includes(c.type) ||
       !Number.isFinite(c.order) || typeof c.archived !== 'boolean' || !/^#[0-9a-f]{6}$/i.test(c.color) ||
       (c.type === 'gasto' && !necessity(c.defaultNecessity)) ||
-      (c.monthlyBudget != null && !amount(c.monthlyBudget)))) return 'Categorías inválidas.';
+      (c.monthlyBudget != null && !amount(c.monthlyBudget)) ||
+      (c.outOfPlan != null && typeof c.outOfPlan !== 'boolean'))) return 'Categorías inválidas.';
   if (d.paymentMethods.some(p => !text(p.name) || !Number.isFinite(p.order))) return 'Métodos de pago inválidos.';
   for (const [store, type] of [['expenses', 'gasto'], ['incomes', 'ingreso']]) {
     if (d[store].some(x => !amount(x.amount) || !date(x.date) || !category(x.categoryId, type) ||

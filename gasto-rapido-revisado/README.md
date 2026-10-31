@@ -36,3 +36,11 @@ Sube los archivos modificados al repositorio y **cambia el número de versión**
 - Si borras los datos de Chrome o desinstalas la app, se pierden los datos: por eso el respaldo.
 - Estructura: `js/db.js` (datos), `js/logic.js` (cálculos puros), una pantalla por archivo
   (`capture.js`, `movements.js`, `summary.js`, `settings.js`).
+
+## Novedades v1.1 — tu plan de presupuesto
+
+- **Ajustes → Mi plan → Aplicar mi presupuesto:** carga los montos del Excel (total $10,525 al mes) y marca como *fuera del plan* Comida fuera, Café/antojos, Súper, Ropa y Entretenimiento.
+- **Alerta antes de guardar:** si un gasto te pasa del presupuesto de su categoría o del total del mes, o es de una categoría fuera del plan, la app te pregunta antes de registrarlo y te ofrece mandarlo a la Lista de deseos.
+- **Lista de deseos (regla de 30 días):** a los 30 días te pregunta si todavía lo quieres y suma lo que te ahorraste.
+- **Recordatorios en la app:** quincena (págate primero y regla de 48 horas) y revisión de domingo. Para avisos con la app cerrada, usa MacroDroid (instrucciones en Ajustes → Recordatorios).
+- **Resumen → Tu plan del mes:** total gastado contra el plan, cuánto te queda y gastos fuera del plan.

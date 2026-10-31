@@ -1,6 +1,6 @@
 // Caché aislada por ruta y versión. Cambia VERSION al publicar cambios.
 const PREFIX = 'gasto-rapido:' + self.registration.scope + ':';
-const VERSION = 'v1.0.1';
+const VERSION = 'v1.1.0';
 const CACHE = PREFIX + VERSION;
 const ASSETS = [
   './',
@@ -18,6 +18,8 @@ const ASSETS = [
   './js/summary.js',
   './js/settings.js',
   './js/backup.js',
+  './js/plan.js',
+  './js/wishes.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/maskable-512.png'

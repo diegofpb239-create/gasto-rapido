@@ -4,6 +4,7 @@ import { state, catById } from './db.js';
 import { esc, money, moneyWhole, curMonth, shiftMonth, monthLabel, $, $$ } from './util.js';
 import { inMonth, sum, byCategory, necessityTotals, savingsProgress, compareMonths, budgetLevel } from './logic.js';
 import { donut } from './charts.js';
+import { overview } from './plan.js';
 
 const view = { month: curMonth() };
 let root = null;
@@ -41,7 +42,7 @@ export function renderSummary(container, { goToSettings } = {}) {
     ${prescindiblesHtml(exp, totalExp, nec)}
     ${donutHtml(cur, totalExp)}
     ${compareHtml(cur, prev, totalExp, sum(prevExp))}
-    ${budgetsHtml(cur)}
+    ${budgetsHtml(cur, view.month)}
   `;
 
   $('#prev', root).onclick = () => { view.month = shiftMonth(view.month, -1); renderSummary(root, { goToSettings }); };
@@ -118,10 +119,20 @@ function compareHtml(cur, prev, total, prevTotal) {
     }).join('')}</div></div>`;
 }
 
-function budgetsHtml(cur) {
+function budgetsHtml(cur, month) {
   const cats = state.categories.filter((c) => c.type === 'gasto' && c.monthlyBudget > 0 && !c.archived);
   if (!cats.length) return '';
-  return `<div class="card"><h3>Presupuestos</h3>${cats.map((c) => {
+  const ov = overview(month);
+  const tRatio = ov.budget > 0 ? ov.spent / ov.budget : 0;
+  const tLvl = budgetLevel(ov.spent, ov.budget);
+  const left = ov.budget - ov.spent;
+  const total = `<div class="plan-total"><div class="row between" style="margin-bottom:6px"><b>Total del mes</b>
+      <span class="num"><b>${esc(money(ov.spent))}</b> / ${esc(money(ov.budget))}</span></div>
+    <div class="bar"><i class="${tLvl === 'ok' ? '' : tLvl}" style="width:${Math.min(100, Math.floor(tRatio * 100))}%"></i></div>
+    <div class="muted" style="font-size:.85rem;margin-top:6px">${left >= 0 ? `Te quedan <b style="color:var(--good)">${esc(money(left))}</b> este mes` : `<b style="color:var(--danger)">Te pasaste por ${esc(money(-left))}</b>`}</div>
+    ${ov.outCats.length ? `<div class="outplan"><b style="color:var(--danger)">🚫 Fuera del plan: ${esc(money(ov.outTotal))}</b>${ov.outCats.map((c) =>
+      `<div class="li"><span>${esc(c.icon)} ${esc(c.name)}</span><span class="num">${esc(money(ov.by.get(c.id)))}</span></div>`).join('')}</div>` : ''}</div>`;
+  return `<div class="card"><h3>Tu plan del mes</h3>${total}${cats.map((c) => {
     const spent = cur.get(c.id) || 0;
     const ratio = spent / c.monthlyBudget;
     const lvl = budgetLevel(spent, c.monthlyBudget);

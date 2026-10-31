@@ -37,6 +37,7 @@ async function start() {
   }
 
   $$('#nav button').forEach((b) => (b.onclick = () => show(b.dataset.view)));
+  document.addEventListener('gr:navigate', (e) => show(e.detail));
 
   // Accesos directos del ícono (manifest "shortcuts"): ?view=capture&type=ingreso
   const q = new URLSearchParams(location.search);

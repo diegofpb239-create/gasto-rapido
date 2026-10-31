@@ -4,6 +4,8 @@ import { state, put, remove, setSetting, catById, catsOf, colorFor } from './db.
 import { esc, money, toCents, fromCents, uid, shortDate, $, $$ } from './util.js';
 import { toast, openSheet, closeSheet, field, options, ask } from './ui.js';
 import { doBackup, pickAndImport, persistenceStatus, requestPersistence } from './backup.js';
+import { applyPlan, wishlist, totalBudget, PLAN, OUT_OF_PLAN } from './plan.js';
+import { openWishlist } from './wishes.js';
 
 let root = null;
 let rerender = () => {};
@@ -27,6 +29,12 @@ export async function renderSettings(container) {
 
   root.innerHTML = `
     <h1 class="page-title">Ajustes</h1>
+    <div class="section-h">Mi plan</div>
+    <div class="list">
+      ${row('📋', 'Aplicar mi presupuesto', state.settings.planAppliedAt ? `Aplicado el ${shortDate(state.settings.planAppliedAt)} · ${money(totalBudget())} al mes` : 'Carga los montos de tu Excel', 'plan')}
+      ${row('🛍️', 'Lista de deseos', `${wishlist().filter((w) => !w.decision).length} esperando · regla de 30 días`, 'wishes')}
+      ${row('⏰', 'Recordatorios', 'Quincena, revisión de domingo y avisos en el teléfono', 'reminders')}
+    </div>
     <div class="section-h">Ahorro y presupuestos</div>
     <div class="list">
       ${row('🎯', 'Meta de ahorro', goal ? `${goal}% de tus ingresos` : 'Sin definir', 'goal')}
@@ -54,6 +62,7 @@ export async function renderSettings(container) {
     if (!b) return;
     ({
       goal: openGoal, cats: openCategories, quick: openQuick, pays: openPays, rec: openRecurring,
+      plan: openPlan, wishes: () => openWishlist(rerender), reminders: openReminders,
       backup: async () => { if (await doBackup()) rerender(); },
       import: () => pickAndImport(() => location.reload()),
       persist: async () => {
@@ -62,6 +71,62 @@ export async function renderSettings(container) {
         rerender();
       }
     })[b.dataset.act]();
+  };
+}
+
+// ---------- Mi plan ----------
+function openPlan() {
+  const outNames = OUT_OF_PLAN.map((id) => catById(id)).filter(Boolean).map((c) => `${c.icon} ${c.name}`).join(', ');
+  const body = openSheet(`
+    <p class="muted" style="margin-top:0;font-size:.88rem">Pone en la app los montos de tu Excel. Puedes ajustar cualquiera después en Categorías y presupuestos.</p>
+    <div class="list">${PLAN.map((p) => `<div class="li"><span class="ic">${esc(p.icon)}</span><span class="grow">${esc(p.name)}</span><b class="num">${esc(money(p.budget))}</b></div>`).join('')}
+      <div class="li"><span class="ic">∑</span><span class="grow"><b>Total</b></span><b class="num">${esc(money(PLAN.reduce((a, p) => a + p.budget, 0)))}</b></div></div>
+    ${outNames ? `<p style="font-size:.9rem">🚫 <b>Fuera del plan</b> (te avisa con cualquier gasto): ${esc(outNames)}.</p>` : ''}
+    <p style="font-size:.9rem">🎯 Meta de ahorro: <b>50%</b> de tus ingresos.</p>
+    <div class="sheet-actions"><button type="button" class="btn" id="c">Cancelar</button><button type="button" class="btn primary" id="s">Aplicar</button></div>`,
+    { title: 'Aplicar mi presupuesto' });
+  $('#c', body).onclick = closeSheet;
+  $('#s', body).onclick = async () => {
+    await applyPlan();
+    closeSheet(); rerender(); toast('Presupuesto aplicado ✔');
+  };
+}
+
+// ---------- Recordatorios ----------
+function openReminders() {
+  const s = state.settings;
+  const days = s.paydays || [15, 31];
+  const body = openSheet(`
+    <label class="row" style="margin-bottom:10px"><input type="checkbox" id="rp" ${s.remindPayday === false ? '' : 'checked'}><span>Aviso de quincena: págate primero y regla de 48 horas</span></label>
+    <div class="two" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${field('Día de pago 1', `<input type="number" id="d1" min="1" max="31" inputmode="numeric" value="${days[0] || ''}">`)}
+      ${field('Día de pago 2 (31 = fin de mes)', `<input type="number" id="d2" min="1" max="31" inputmode="numeric" value="${days[1] || ''}">`)}
+    </div>
+    ${field('Cuánto pasar a ahorro cada quincena', `<input type="text" id="pt" inputmode="decimal" value="${s.payTransfer ? esc(fromCents(s.payTransfer)) : ''}" placeholder="Ej. 6737.50">`)}
+    <label class="row" style="margin-bottom:14px"><input type="checkbox" id="rs" ${s.remindSunday === false ? '' : 'checked'}><span>Revisión de domingo</span></label>
+    <div class="card"><h3>Avisos en el teléfono (con la app cerrada)</h3>
+      <p style="font-size:.88rem;margin:0">La app no tiene servidor, así que los avisos a hora fija los pones en <b>MacroDroid</b>:</p>
+      <ol style="font-size:.88rem;padding-left:20px;margin:8px 0 0">
+        <li>Nueva macro → Disparador: <b>Día/Hora</b> (ej. todos los días 9:00 pm).</li>
+        <li>Acción: <b>Mostrar notificación</b> "¿Ya registraste tus gastos de hoy?".</li>
+        <li>Al tocarla: <b>Abrir sitio web</b> con el enlace de la app y <code>?view=capture</code> al final.</li>
+        <li>Repite para el día de pago (días ${esc(String(days[0] || 15))} y ${esc(String(days[1] || 31))}) y el domingo, con <code>?view=summary</code>.</li>
+      </ol></div>
+    <div class="sheet-actions"><button type="button" class="btn" id="c">Cancelar</button><button type="button" class="btn primary" id="s">Guardar</button></div>`,
+    { title: 'Recordatorios' });
+  $('#c', body).onclick = closeSheet;
+  $('#s', body).onclick = async () => {
+    const d1 = Math.round(Number($('#d1', body).value)), d2 = Math.round(Number($('#d2', body).value));
+    const valid = (d) => d >= 1 && d <= 31;
+    if (!valid(d1) || ($('#d2', body).value && !valid(d2))) { toast('Los días de pago van del 1 al 31'); return; }
+    const pt = $('#pt', body).value.trim();
+    const ptc = pt ? toCents(pt) : 0;
+    if (pt && !ptc) { toast('Escribe un monto válido'); return; }
+    await setSetting('paydays', [d1, ...(valid(d2) ? [d2] : [])]);
+    await setSetting('payTransfer', ptc);
+    await setSetting('remindPayday', $('#rp', body).checked);
+    await setSetting('remindSunday', $('#rs', body).checked);
+    closeSheet(); rerender(); toast('Recordatorios guardados ✔');
   };
 }
 
@@ -109,7 +174,8 @@ function editCategory(cat, type) {
     ${field('Nombre', `<input type="text" id="n" maxlength="30" value="${esc(cat ? cat.name : '')}">`)}
     ${field('Ícono (un emoji)', `<input type="text" id="i" maxlength="4" value="${esc(cat ? cat.icon : '🏷️')}">`)}
     ${t === 'gasto' ? `<span class="muted" style="font-size:.8rem">Marca por defecto</span>${necSeg('nec', nec)}
-      ${field('Presupuesto mensual (opcional)', `<input type="text" id="b" inputmode="decimal" placeholder="Sin presupuesto" value="${cat && cat.monthlyBudget ? esc(fromCents(cat.monthlyBudget)) : ''}">`)}` : ''}
+      ${field('Presupuesto mensual (opcional)', `<input type="text" id="b" inputmode="decimal" placeholder="Sin presupuesto" value="${cat && cat.monthlyBudget ? esc(fromCents(cat.monthlyBudget)) : ''}">`)}
+      <label class="row" style="margin-bottom:14px"><input type="checkbox" id="o" ${cat && cat.outOfPlan ? 'checked' : ''}><span>Fuera de mi plan (avisarme con cualquier gasto)</span></label>` : ''}
     ${!isNew ? `<label class="row" style="margin-bottom:14px"><input type="checkbox" id="a" ${cat.archived ? 'checked' : ''}><span>Archivar (ocultar al capturar; el historial se conserva)</span></label>` : ''}
     <div class="sheet-actions"><button type="button" class="btn" id="c">Volver</button><button type="button" class="btn primary" id="s">Guardar</button></div>`,
     { title: isNew ? 'Nueva categoría' : 'Editar categoría' });
@@ -123,7 +189,8 @@ function editCategory(cat, type) {
       ...(cat || { id: 'c_' + uid().slice(0, 8), type: t, color: colorFor(order) }),
       name, icon: $('#i', body).value.trim() || '🏷️', order,
       defaultNecessity: t === 'gasto' ? nec : null,
-      monthlyBudget: t === 'gasto' ? (toCents($('#b', body).value) || null) : null,
+      monthlyBudget: t === 'gasto' && !$('#o', body).checked ? (toCents($('#b', body).value) || null) : null,
+      outOfPlan: t === 'gasto' ? $('#o', body).checked : false,
       archived: !isNew && $('#a', body).checked
     });
     openCategories(); rerender();
